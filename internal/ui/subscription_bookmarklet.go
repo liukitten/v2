@@ -5,6 +5,7 @@ package ui // import "miniflux.app/v2/internal/ui"
 
 import (
 	"net/http"
+	"regexp"
 
 	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/http/request"
@@ -12,14 +13,12 @@ import (
 	"miniflux.app/v2/internal/ui/form"
 	"miniflux.app/v2/internal/ui/session"
 	"miniflux.app/v2/internal/ui/view"
-
-	"mvdan.cc/xurls/v2"
 )
 
-func (h *handler) bookmarklet(w http.ResponseWriter, r *http.Request) {
-	sess := session.New(h.store, request.SessionID(r))
-	view := view.New(h.tpl, r, sess)
+// Best effort url extraction regexp
+var urlRe = regexp.MustCompile(`(?i)(?:https?://)?[0-9a-z.]+[.][a-z]+(?::[0-9]+)?(?:/[^ ]+|/)?`)
 
+func (h *handler) bookmarklet(w http.ResponseWriter, r *http.Request) {
 	user, err := h.store.UserByID(request.UserID(r))
 	if err != nil {
 		html.ServerError(w, r, err)
@@ -42,9 +41,11 @@ func (h *handler) bookmarklet(w http.ResponseWriter, r *http.Request) {
 	// See https://bugs.chromium.org/p/chromium/issues/detail?id=789379.
 	text := request.QueryStringParam(r, "text", "")
 	if text != "" && bookmarkletURL == "" {
-		bookmarkletURL = xurls.Relaxed().FindString(text)
+		bookmarkletURL = urlRe.FindString(text)
 	}
 
+	sess := session.New(h.store, request.SessionID(r))
+	view := view.New(h.tpl, r, sess)
 	view.Set("form", form.SubscriptionForm{URL: bookmarkletURL})
 	view.Set("categories", categories)
 	view.Set("menu", "feeds")

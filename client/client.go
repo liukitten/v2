@@ -18,16 +18,44 @@ type Client struct {
 }
 
 // New returns a new Miniflux client.
+// Deprecated: use NewClient instead.
 func New(endpoint string, credentials ...string) *Client {
-	// Web gives "API Endpoint = https://miniflux.app/v1/", it doesn't work (/v1/v1/me)
+	return NewClient(endpoint, credentials...)
+}
+
+// NewClient returns a new Miniflux client.
+func NewClient(endpoint string, credentials ...string) *Client {
+	// Trim trailing slashes and /v1 from the endpoint.
 	endpoint = strings.TrimSuffix(endpoint, "/")
 	endpoint = strings.TrimSuffix(endpoint, "/v1")
-	// trim to https://miniflux.app
-
-	if len(credentials) == 2 {
+	switch len(credentials) {
+	case 2:
 		return &Client{request: &request{endpoint: endpoint, username: credentials[0], password: credentials[1]}}
+	case 1:
+		return &Client{request: &request{endpoint: endpoint, apiKey: credentials[0]}}
+	default:
+		return &Client{request: &request{endpoint: endpoint}}
 	}
-	return &Client{request: &request{endpoint: endpoint, apiKey: credentials[0]}}
+}
+
+// Healthcheck checks if the application is up and running.
+func (c *Client) Healthcheck() error {
+	body, err := c.request.Get("/healthcheck")
+	if err != nil {
+		return fmt.Errorf("miniflux: unable to perform healthcheck: %w", err)
+	}
+	defer body.Close()
+
+	responseBodyContent, err := io.ReadAll(body)
+	if err != nil {
+		return fmt.Errorf("miniflux: unable to read healthcheck response: %w", err)
+	}
+
+	if string(responseBodyContent) != "OK" {
+		return fmt.Errorf("miniflux: invalid healthcheck response: %q", responseBodyContent)
+	}
+
+	return nil
 }
 
 // Version returns the version of the Miniflux instance.
@@ -155,6 +183,25 @@ func (c *Client) DeleteUser(userID int64) error {
 func (c *Client) MarkAllAsRead(userID int64) error {
 	_, err := c.request.Put(fmt.Sprintf("/v1/users/%d/mark-all-as-read", userID), nil)
 	return err
+}
+
+// IntegrationsStatus fetches the integrations status for the logged user.
+func (c *Client) IntegrationsStatus() (bool, error) {
+	body, err := c.request.Get("/v1/integrations/status")
+	if err != nil {
+		return false, err
+	}
+	defer body.Close()
+
+	var response struct {
+		HasIntegrations bool `json:"has_integrations"`
+	}
+
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		return false, fmt.Errorf("miniflux: response error (%v)", err)
+	}
+
+	return response.HasIntegrations, nil
 }
 
 // Discover try to find subscriptions from a website.
@@ -528,6 +575,25 @@ func (c *Client) SaveEntry(entryID int64) error {
 	return err
 }
 
+// FetchEntryOriginalContent fetches the original content of an entry using the scraper.
+func (c *Client) FetchEntryOriginalContent(entryID int64) (string, error) {
+	body, err := c.request.Get(fmt.Sprintf("/v1/entries/%d/fetch-content", entryID))
+	if err != nil {
+		return "", err
+	}
+	defer body.Close()
+
+	var response struct {
+		Content string `json:"content"`
+	}
+
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		return "", fmt.Errorf("miniflux: response error (%v)", err)
+	}
+
+	return response.Content, nil
+}
+
 // FetchCounters fetches feed counters.
 func (c *Client) FetchCounters() (*FeedCounters, error) {
 	body, err := c.request.Get("/v1/feeds/counters")
@@ -564,6 +630,28 @@ func (c *Client) Icon(iconID int64) (*FeedIcon, error) {
 	}
 
 	return feedIcon, nil
+}
+
+// Enclosure fetches a specific enclosure.
+func (c *Client) Enclosure(enclosureID int64) (*Enclosure, error) {
+	body, err := c.request.Get(fmt.Sprintf("/v1/enclosures/%d", enclosureID))
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	var enclosure *Enclosure
+	if err := json.NewDecoder(body).Decode(&enclosure); err != nil {
+		return nil, fmt.Errorf("miniflux: response error(%v)", err)
+	}
+
+	return enclosure, nil
+}
+
+// UpdateEnclosure updates an enclosure.
+func (c *Client) UpdateEnclosure(enclosureID int64, enclosureUpdate *EnclosureUpdateRequest) error {
+	_, err := c.request.Put(fmt.Sprintf("/v1/enclosures/%d", enclosureID), enclosureUpdate)
+	return err
 }
 
 func buildFilterQueryString(path string, filter *Filter) string {
@@ -636,6 +724,10 @@ func buildFilterQueryString(path string, filter *Filter) string {
 
 		if filter.FeedID > 0 {
 			values.Set("feed_id", strconv.FormatInt(filter.FeedID, 10))
+		}
+
+		if filter.GloballyVisible {
+			values.Set("globally_visible", "true")
 		}
 
 		for _, status := range filter.Statuses {

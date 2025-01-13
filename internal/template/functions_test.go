@@ -95,20 +95,46 @@ func TestIsEmail(t *testing.T) {
 	}
 }
 
+func TestDuration(t *testing.T) {
+	now := time.Now()
+	var dt = []struct {
+		in  time.Time
+		out string
+	}{
+		{time.Time{}, ""},
+		{now.Add(time.Hour), "1h0m0s"},
+		{now.Add(time.Minute), "1m0s"},
+		{now.Add(time.Minute * 40), "40m0s"},
+		{now.Add(time.Millisecond * 40), "0s"},
+		{now.Add(time.Millisecond * 80), "0s"},
+		{now.Add(time.Millisecond * 400), "0s"},
+		{now.Add(time.Millisecond * 800), "1s"},
+		{now.Add(time.Millisecond * 4321), "4s"},
+		{now.Add(time.Millisecond * 8765), "9s"},
+		{now.Add(time.Microsecond * 12345678), "12s"},
+		{now.Add(time.Microsecond * 87654321), "1m28s"},
+	}
+	for i, tt := range dt {
+		if out := durationImpl(tt.in, now); out != tt.out {
+			t.Errorf(`%d. content mismatch for "%v": expected=%q got=%q`, i, tt.in, tt.out, out)
+		}
+	}
+}
+
 func TestElapsedTime(t *testing.T) {
 	printer := locale.NewPrinter("en_US")
 	var dt = []struct {
 		in  time.Time
 		out string
 	}{
-		{time.Time{}, printer.Printf("time_elapsed.not_yet")},
-		{time.Now().Add(time.Hour), printer.Printf("time_elapsed.not_yet")},
-		{time.Now(), printer.Printf("time_elapsed.now")},
+		{time.Time{}, printer.Print("time_elapsed.not_yet")},
+		{time.Now().Add(time.Hour), printer.Print("time_elapsed.not_yet")},
+		{time.Now(), printer.Print("time_elapsed.now")},
 		{time.Now().Add(-time.Minute), printer.Plural("time_elapsed.minutes", 1, 1)},
 		{time.Now().Add(-time.Minute * 40), printer.Plural("time_elapsed.minutes", 40, 40)},
 		{time.Now().Add(-time.Hour), printer.Plural("time_elapsed.hours", 1, 1)},
 		{time.Now().Add(-time.Hour * 3), printer.Plural("time_elapsed.hours", 3, 3)},
-		{time.Now().Add(-time.Hour * 32), printer.Printf("time_elapsed.yesterday")},
+		{time.Now().Add(-time.Hour * 32), printer.Print("time_elapsed.yesterday")},
 		{time.Now().Add(-time.Hour * 24 * 3), printer.Plural("time_elapsed.days", 3, 3)},
 		{time.Now().Add(-time.Hour * 24 * 14), printer.Plural("time_elapsed.days", 14, 14)},
 		{time.Now().Add(-time.Hour * 24 * 15), printer.Plural("time_elapsed.days", 15, 15)},
@@ -130,6 +156,8 @@ func TestFormatFileSize(t *testing.T) {
 		input    int64
 		expected string
 	}{
+		{0, "0 B"},
+		{1, "1 B"},
 		{500, "500 B"},
 		{1024, "1.0 KiB"},
 		{43520, "42.5 KiB"},

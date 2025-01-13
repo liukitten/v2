@@ -22,7 +22,7 @@ import (
 // - Feeds with encoding specified in both places
 // - Feeds with encoding specified only in XML document and not in HTTP header
 // - Feeds with wrong encoding defined and already in UTF-8
-func CharsetReader(label string, input io.Reader) (io.Reader, error) {
+func CharsetReader(charsetLabel string, input io.Reader) (io.Reader, error) {
 	buffer, _ := io.ReadAll(input)
 	r := bytes.NewReader(buffer)
 
@@ -33,5 +33,5 @@ func CharsetReader(label string, input io.Reader) (io.Reader, error) {
 	}
 
 	// Transform document to UTF-8 from the specified encoding in XML prolog.
-	return charset.NewReaderLabel(label, r)
+	return charset.NewReaderLabel(charsetLabel, r)
 }

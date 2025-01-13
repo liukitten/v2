@@ -64,9 +64,11 @@ func (s *Storage) CountAllFeeds() map[string]int64 {
 	}
 	defer rows.Close()
 
-	results := make(map[string]int64)
-	results["enabled"] = 0
-	results["disabled"] = 0
+	results := map[string]int64{
+		"enabled":  0,
+		"disabled": 0,
+		"total":    0,
+	}
 
 	for rows.Next() {
 		var disabled bool
@@ -162,15 +164,21 @@ func (s *Storage) FeedsByCategoryWithCounters(userID, categoryID int64) (model.F
 
 // WeeklyFeedEntryCount returns the weekly entry count for a feed.
 func (s *Storage) WeeklyFeedEntryCount(userID, feedID int64) (int, error) {
+	// Calculate a virtual weekly count based on the average updating frequency.
+	// This helps after just adding a high volume feed.
+	// Return 0 when the 'count(*)' is zero(0) or one(1).
 	query := `
 		SELECT
-			count(*)
+			COALESCE(CAST(CEIL(
+				(EXTRACT(epoch from interval '1 week'))	/
+				NULLIF((EXTRACT(epoch from (max(published_at)-min(published_at))/NULLIF((count(*)-1), 0) )), 0)
+			) AS BIGINT), 0)
 		FROM
 			entries
 		WHERE
-			entries.user_id=$1 AND 
-			entries.feed_id=$2 AND 
-			entries.published_at BETWEEN (now() - interval '1 week') AND now();
+			entries.user_id=$1 AND
+			entries.feed_id=$2 AND
+			entries.published_at >= now() - interval '1 week';
 	`
 
 	var weeklyCount int
@@ -229,10 +237,12 @@ func (s *Storage) CreateFeed(feed *model.Feed) error {
 			hide_globally,
 			url_rewrite_rules,
 			no_media_player,
-			apprise_service_urls
+			apprise_service_urls,
+			disable_http2,
+			description
 		)
 		VALUES
-			($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+			($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 		RETURNING
 			id
 	`
@@ -262,21 +272,23 @@ func (s *Storage) CreateFeed(feed *model.Feed) error {
 		feed.UrlRewriteRules,
 		feed.NoMediaPlayer,
 		feed.AppriseServiceURLs,
+		feed.DisableHTTP2,
+		feed.Description,
 	).Scan(&feed.ID)
 	if err != nil {
 		return fmt.Errorf(`store: unable to create feed %q: %v`, feed.FeedURL, err)
 	}
 
-	for i := 0; i < len(feed.Entries); i++ {
-		feed.Entries[i].FeedID = feed.ID
-		feed.Entries[i].UserID = feed.UserID
+	for _, entry := range feed.Entries {
+		entry.FeedID = feed.ID
+		entry.UserID = feed.UserID
 
 		tx, err := s.db.Begin()
 		if err != nil {
 			return fmt.Errorf(`store: unable to start transaction: %v`, err)
 		}
 
-		entryExists, err := s.entryExists(tx, feed.Entries[i])
+		entryExists, err := s.entryExists(tx, entry)
 		if err != nil {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
 				return fmt.Errorf(`store: unable to rollback transaction: %v (rolled back due to: %v)`, rollbackErr, err)
@@ -285,7 +297,7 @@ func (s *Storage) CreateFeed(feed *model.Feed) error {
 		}
 
 		if !entryExists {
-			if err := s.createEntry(tx, feed.Entries[i]); err != nil {
+			if err := s.createEntry(tx, entry); err != nil {
 				if rollbackErr := tx.Rollback(); rollbackErr != nil {
 					return fmt.Errorf(`store: unable to rollback transaction: %v (rolled back due to: %v)`, rollbackErr, err)
 				}
@@ -333,9 +345,13 @@ func (s *Storage) UpdateFeed(feed *model.Feed) (err error) {
 			hide_globally=$24,
 			url_rewrite_rules=$25,
 			no_media_player=$26,
-			apprise_service_urls=$27
+			apprise_service_urls=$27,
+			disable_http2=$28,
+			description=$29,
+			ntfy_enabled=$30,
+			ntfy_priority=$31
 		WHERE
-			id=$28 AND user_id=$29
+			id=$32 AND user_id=$33
 	`
 	_, err = s.db.Exec(query,
 		feed.FeedURL,
@@ -365,6 +381,10 @@ func (s *Storage) UpdateFeed(feed *model.Feed) (err error) {
 		feed.UrlRewriteRules,
 		feed.NoMediaPlayer,
 		feed.AppriseServiceURLs,
+		feed.DisableHTTP2,
+		feed.Description,
+		feed.NtfyEnabled,
+		feed.NtfyPriority,
 		feed.ID,
 		feed.UserID,
 	)

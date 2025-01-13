@@ -4,11 +4,18 @@
 package icon // import "miniflux.app/v2/internal/reader/icon"
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log/slog"
 	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 
 	"miniflux.app/v2/internal/config"
@@ -18,6 +25,8 @@ import (
 	"miniflux.app/v2/internal/urllib"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/image/draw"
+	"golang.org/x/net/html/charset"
 )
 
 type IconFinder struct {
@@ -110,7 +119,10 @@ func (f *IconFinder) FetchIconsFromHTMLDocument() (*model.Icon, error) {
 		return nil, fmt.Errorf("icon: unable to download website index page: %w", localizedError.Error())
 	}
 
-	iconURLs, err := findIconURLsFromHTMLDocument(responseHandler.Body(config.Opts.HTTPClientMaxBodySize()))
+	iconURLs, err := findIconURLsFromHTMLDocument(
+		responseHandler.Body(config.Opts.HTTPClientMaxBodySize()),
+		responseHandler.ContentType(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -175,18 +187,73 @@ func (f *IconFinder) DownloadIcon(iconURL string) (*model.Icon, error) {
 		Content:  responseBody,
 	}
 
+	icon = resizeIcon(icon)
+
 	return icon, nil
 }
 
-func findIconURLsFromHTMLDocument(body io.Reader) ([]string, error) {
-	queries := []string{
-		"link[rel='shortcut icon']",
-		"link[rel='Shortcut Icon']",
-		"link[rel='icon shortcut']",
-		"link[rel='icon']",
+func resizeIcon(icon *model.Icon) *model.Icon {
+	r := bytes.NewReader(icon.Content)
+
+	if !slices.Contains([]string{"image/jpeg", "image/png", "image/gif"}, icon.MimeType) {
+		slog.Info("icon isn't a png/gif/jpeg/ico, can't resize", slog.String("mimetype", icon.MimeType))
+		return icon
 	}
 
-	doc, err := goquery.NewDocumentFromReader(body)
+	// Don't resize icons that we can't decode, or that already have the right size.
+	config, _, err := image.DecodeConfig(r)
+	if err != nil {
+		slog.Warn("unable to decode the metadata of the icon", slog.Any("error", err))
+		return icon
+	}
+	if config.Height <= 32 && config.Width <= 32 {
+		slog.Debug("icon don't need to be rescaled", slog.Int("height", config.Height), slog.Int("width", config.Width))
+		return icon
+	}
+
+	r.Seek(0, io.SeekStart)
+
+	var src image.Image
+	switch icon.MimeType {
+	case "image/jpeg":
+		src, err = jpeg.Decode(r)
+	case "image/png":
+		src, err = png.Decode(r)
+	case "image/gif":
+		src, err = gif.Decode(r)
+	}
+	if err != nil {
+		slog.Warn("unable to decode the icon", slog.Any("error", err))
+		return icon
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	draw.BiLinear.Scale(dst, dst.Rect, src, src.Bounds(), draw.Over, nil)
+
+	var b bytes.Buffer
+	if err = png.Encode(io.Writer(&b), dst); err != nil {
+		slog.Warn("unable to encode the new icon", slog.Any("error", err))
+	}
+
+	icon.Content = b.Bytes()
+	icon.MimeType = "image/png"
+	return icon
+}
+
+func findIconURLsFromHTMLDocument(body io.Reader, contentType string) ([]string, error) {
+	queries := []string{
+		"link[rel='icon' i]",
+		"link[rel='shortcut icon' i]",
+		"link[rel='icon shortcut' i]",
+		"link[rel='apple-touch-icon-precomposed.png']",
+	}
+
+	htmlDocumentReader, err := charset.NewReader(body, contentType)
+	if err != nil {
+		return nil, fmt.Errorf("icon: unable to create charset reader: %w", err)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(htmlDocumentReader)
 	if err != nil {
 		return nil, fmt.Errorf("icon: unable to read document: %v", err)
 	}
@@ -196,18 +263,13 @@ func findIconURLsFromHTMLDocument(body io.Reader) ([]string, error) {
 		slog.Debug("Searching icon URL in HTML document", slog.String("query", query))
 
 		doc.Find(query).Each(func(i int, s *goquery.Selection) {
-			var iconURL string
-
 			if href, exists := s.Attr("href"); exists {
-				iconURL = strings.TrimSpace(href)
-			}
-
-			if iconURL != "" {
-				iconURLs = append(iconURLs, iconURL)
-
-				slog.Debug("Found icon URL in HTML document",
-					slog.String("query", query),
-					slog.String("icon_url", iconURL))
+				if iconURL := strings.TrimSpace(href); iconURL != "" {
+					iconURLs = append(iconURLs, iconURL)
+					slog.Debug("Found icon URL in HTML document",
+						slog.String("query", query),
+						slog.String("icon_url", iconURL))
+				}
 			}
 		})
 	}
@@ -216,35 +278,23 @@ func findIconURLsFromHTMLDocument(body io.Reader) ([]string, error) {
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs#syntax
-// data:[<mediatype>][;base64],<data>
+// data:[<mediatype>][;encoding],<data>
+// we consider <mediatype> to be mandatory, and it has to start with `image/`.
+// we consider `base64`, `utf8` and the empty string to be the only valid encodings
 func parseImageDataURL(value string) (*model.Icon, error) {
-	var mediaType string
-	var encoding string
+	re := regexp.MustCompile(`^data:` +
+		`(?P<mediatype>image/[^;,]+)` +
+		`(?:;(?P<encoding>base64|utf8))?` +
+		`,(?P<data>.+)$`)
 
-	if !strings.HasPrefix(value, "data:") {
-		return nil, fmt.Errorf(`icon: invalid data URL (missing data:) %q`, value)
+	matches := re.FindStringSubmatch(value)
+	if matches == nil {
+		return nil, fmt.Errorf(`icon: invalid data URL %q`, value)
 	}
 
-	value = value[5:]
-
-	comma := strings.Index(value, ",")
-	if comma < 0 {
-		return nil, fmt.Errorf(`icon: invalid data URL (no comma) %q`, value)
-	}
-
-	data := value[comma+1:]
-	semicolon := strings.Index(value[0:comma], ";")
-
-	if semicolon > 0 {
-		mediaType = value[0:semicolon]
-		encoding = value[semicolon+1 : comma]
-	} else {
-		mediaType = value[0:comma]
-	}
-
-	if !strings.HasPrefix(mediaType, "image/") {
-		return nil, fmt.Errorf(`icon: invalid media type %q`, mediaType)
-	}
+	mediaType := matches[re.SubexpIndex("mediatype")]
+	encoding := matches[re.SubexpIndex("encoding")]
+	data := matches[re.SubexpIndex("data")]
 
 	var blob []byte
 	switch encoding {
@@ -262,19 +312,11 @@ func parseImageDataURL(value string) (*model.Icon, error) {
 		blob = []byte(decodedData)
 	case "utf8":
 		blob = []byte(data)
-	default:
-		return nil, fmt.Errorf(`icon: unsupported data URL encoding %q`, value)
 	}
 
-	if len(blob) == 0 {
-		return nil, fmt.Errorf(`icon: empty data URL %q`, value)
-	}
-
-	icon := &model.Icon{
+	return &model.Icon{
 		Hash:     crypto.HashFromBytes(blob),
 		Content:  blob,
 		MimeType: mediaType,
-	}
-
-	return icon, nil
+	}, nil
 }

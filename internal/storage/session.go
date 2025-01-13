@@ -70,6 +70,23 @@ func (s *Storage) UpdateAppSessionField(sessionID, field string, value any) erro
 	return nil
 }
 
+func (s *Storage) UpdateAppSessionObjectField(sessionID, field string, value interface{}) error {
+	query := `
+		UPDATE
+			sessions
+		SET
+			data = jsonb_set(data, '{%s}', $1, true)
+		WHERE
+			id=$2
+	`
+	_, err := s.db.Exec(fmt.Sprintf(query, field), value, sessionID)
+	if err != nil {
+		return fmt.Errorf(`store: unable to update session field: %v`, err)
+	}
+
+	return nil
+}
+
 // AppSession returns the given session.
 func (s *Storage) AppSession(id string) (*model.Session, error) {
 	var session model.Session
@@ -111,9 +128,9 @@ func (s *Storage) CleanOldSessions(days int) int64 {
 		DELETE FROM
 			sessions
 		WHERE
-			id IN (SELECT id FROM sessions WHERE created_at < now() - interval '%d days')
+			created_at < now() - $1::interval
 	`
-	result, err := s.db.Exec(fmt.Sprintf(query, days))
+	result, err := s.db.Exec(query, fmt.Sprintf("%d days", days))
 	if err != nil {
 		return 0
 	}

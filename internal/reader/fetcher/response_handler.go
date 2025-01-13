@@ -8,8 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"miniflux.app/v2/internal/locale"
 )
@@ -47,20 +53,49 @@ func (r *ResponseHandler) ETag() string {
 	return r.httpResponse.Header.Get("ETag")
 }
 
+func (r *ResponseHandler) ParseRetryDelay() int {
+	retryAfterHeaderValue := r.httpResponse.Header.Get("Retry-After")
+	if retryAfterHeaderValue != "" {
+		// First, try to parse as an integer (number of seconds)
+		if seconds, err := strconv.Atoi(retryAfterHeaderValue); err == nil {
+			return seconds
+		}
+
+		// If not an integer, try to parse as an HTTP-date
+		if t, err := time.Parse(time.RFC1123, retryAfterHeaderValue); err == nil {
+			return int(time.Until(t).Seconds())
+		}
+	}
+	return 0
+}
+
+func (r *ResponseHandler) IsRateLimited() bool {
+	return r.httpResponse != nil && r.httpResponse.StatusCode == http.StatusTooManyRequests
+}
+
 func (r *ResponseHandler) IsModified(lastEtagValue, lastModifiedValue string) bool {
 	if r.httpResponse.StatusCode == http.StatusNotModified {
 		return false
 	}
 
-	if r.ETag() != "" && r.ETag() == lastEtagValue {
-		return false
+	if r.ETag() != "" {
+		return r.ETag() != lastEtagValue
 	}
 
-	if r.LastModified() != "" && r.LastModified() == lastModifiedValue {
-		return false
+	if r.LastModified() != "" {
+		return r.LastModified() != lastModifiedValue
 	}
 
 	return true
+}
+
+func (r *ResponseHandler) IsRedirect() bool {
+	return r.httpResponse != nil &&
+		(r.httpResponse.StatusCode == http.StatusMovedPermanently ||
+			r.httpResponse.StatusCode == http.StatusFound ||
+			r.httpResponse.StatusCode == http.StatusSeeOther ||
+			r.httpResponse.StatusCode == http.StatusTemporaryRedirect ||
+			r.httpResponse.StatusCode == http.StatusPermanentRedirect)
 }
 
 func (r *ResponseHandler) Close() {
@@ -69,12 +104,31 @@ func (r *ResponseHandler) Close() {
 	}
 }
 
+func (r *ResponseHandler) getReader(maxBodySize int64) io.ReadCloser {
+	contentEncoding := strings.ToLower(r.httpResponse.Header.Get("Content-Encoding"))
+	slog.Debug("Request response",
+		slog.String("effective_url", r.EffectiveURL()),
+		slog.String("content_length", r.httpResponse.Header.Get("Content-Length")),
+		slog.String("content_encoding", contentEncoding),
+		slog.String("content_type", r.httpResponse.Header.Get("Content-Type")),
+	)
+
+	reader := r.httpResponse.Body
+	switch contentEncoding {
+	case "br":
+		reader = NewBrotliReadCloser(r.httpResponse.Body)
+	case "gzip":
+		reader = NewGzipReadCloser(r.httpResponse.Body)
+	}
+	return http.MaxBytesReader(nil, reader, maxBodySize)
+}
+
 func (r *ResponseHandler) Body(maxBodySize int64) io.ReadCloser {
-	return http.MaxBytesReader(nil, r.httpResponse.Body, maxBodySize)
+	return r.getReader(maxBodySize)
 }
 
 func (r *ResponseHandler) ReadBody(maxBodySize int64) ([]byte, *locale.LocalizedErrorWrapper) {
-	limitedReader := http.MaxBytesReader(nil, r.httpResponse.Body, maxBodySize)
+	limitedReader := r.getReader(maxBodySize)
 
 	buffer, err := io.ReadAll(limitedReader)
 	if err != nil && err != io.EOF {
@@ -94,23 +148,18 @@ func (r *ResponseHandler) ReadBody(maxBodySize int64) ([]byte, *locale.Localized
 
 func (r *ResponseHandler) LocalizedError() *locale.LocalizedErrorWrapper {
 	if r.clientErr != nil {
-		switch r.clientErr.(type) {
-		case x509.CertificateInvalidError, x509.HostnameError:
+		switch {
+		case isSSLError(r.clientErr):
 			return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.tls_error", r.clientErr)
-		case *net.OpError:
+		case isNetworkError(r.clientErr):
 			return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.network_operation", r.clientErr)
-		case net.Error:
-			networkErr := r.clientErr.(net.Error)
-			if networkErr.Timeout() {
-				return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.network_timeout", r.clientErr)
-			}
-		}
-
-		if errors.Is(r.clientErr, io.EOF) {
+		case os.IsTimeout(r.clientErr):
+			return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.network_timeout", r.clientErr)
+		case errors.Is(r.clientErr, io.EOF):
 			return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.http_empty_response")
+		default:
+			return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.http_client_error", r.clientErr)
 		}
-
-		return locale.NewLocalizedErrorWrapper(fmt.Errorf("fetcher: %w", r.clientErr), "error.http_client_error", r.clientErr)
 	}
 
 	switch r.httpResponse.StatusCode {
@@ -144,4 +193,33 @@ func (r *ResponseHandler) LocalizedError() *locale.LocalizedErrorWrapper {
 	}
 
 	return nil
+}
+
+func isNetworkError(err error) bool {
+	if _, ok := err.(*url.Error); ok {
+		return true
+	}
+	if err == io.EOF {
+		return true
+	}
+	var opErr *net.OpError
+	if ok := errors.As(err, &opErr); ok {
+		return true
+	}
+	return false
+}
+
+func isSSLError(err error) bool {
+	var certErr x509.UnknownAuthorityError
+	if errors.As(err, &certErr) {
+		return true
+	}
+
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return true
+	}
+
+	var algErr x509.InsecureAlgorithmError
+	return errors.As(err, &algErr)
 }

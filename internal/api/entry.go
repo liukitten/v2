@@ -8,19 +8,16 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/http/request"
 	"miniflux.app/v2/internal/http/response/json"
 	"miniflux.app/v2/internal/integration"
+	"miniflux.app/v2/internal/mediaproxy"
 	"miniflux.app/v2/internal/model"
-	"miniflux.app/v2/internal/proxy"
 	"miniflux.app/v2/internal/reader/processor"
 	"miniflux.app/v2/internal/reader/readingtime"
 	"miniflux.app/v2/internal/storage"
-	"miniflux.app/v2/internal/urllib"
 	"miniflux.app/v2/internal/validator"
 )
 
@@ -36,19 +33,9 @@ func (h *handler) getEntryFromBuilder(w http.ResponseWriter, r *http.Request, b 
 		return
 	}
 
-	entry.Content = proxy.AbsoluteProxyRewriter(h.router, r.Host, entry.Content)
-	proxyOption := config.Opts.ProxyOption()
+	entry.Content = mediaproxy.RewriteDocumentWithAbsoluteProxyURL(h.router, entry.Content)
 
-	for i := range entry.Enclosures {
-		if proxyOption == "all" || proxyOption != "none" && !urllib.IsHTTPS(entry.Enclosures[i].URL) {
-			for _, mediaType := range config.Opts.ProxyMediaTypes() {
-				if strings.HasPrefix(entry.Enclosures[i].MimeType, mediaType+"/") {
-					entry.Enclosures[i].URL = proxy.AbsoluteProxifyURL(h.router, r.Host, entry.Enclosures[i].URL)
-					break
-				}
-			}
-		}
-	}
+	entry.Enclosures.ProxifyEnclosureURL(h.router)
 
 	json.OK(w, r, entry)
 }
@@ -149,6 +136,15 @@ func (h *handler) findEntries(w http.ResponseWriter, r *http.Request, feedID int
 	builder.WithLimit(limit)
 	builder.WithTags(tags)
 	builder.WithEnclosures()
+
+	if request.HasQueryParam(r, "globally_visible") {
+		globallyVisible := request.QueryBoolParam(r, "globally_visible", true)
+
+		if globallyVisible {
+			builder.WithGloballyVisible()
+		}
+	}
+
 	configureFilters(builder, r)
 
 	entries, err := builder.GetEntries()
@@ -164,7 +160,7 @@ func (h *handler) findEntries(w http.ResponseWriter, r *http.Request, feedID int
 	}
 
 	for i := range entries {
-		entries[i].Content = proxy.AbsoluteProxyRewriter(h.router, r.Host, entries[i].Content)
+		entries[i].Content = mediaproxy.RewriteDocumentWithAbsoluteProxyURL(h.router, entries[i].Content)
 	}
 
 	json.OK(w, r, &entriesResponse{Total: count, Entries: entries})
@@ -275,7 +271,9 @@ func (h *handler) updateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entryUpdateRequest.Patch(entry)
-	entry.ReadingTime = readingtime.EstimateReadingTime(entry.Content, user.DefaultReadingSpeed, user.CJKReadingSpeed)
+	if user.ShowReadingTime {
+		entry.ReadingTime = readingtime.EstimateReadingTime(entry.Content, user.DefaultReadingSpeed, user.CJKReadingSpeed)
+	}
 
 	if err := h.store.UpdateEntryTitleAndContent(entry); err != nil {
 		json.ServerError(w, r, err)

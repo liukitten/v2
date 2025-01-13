@@ -7,6 +7,8 @@ import (
 	json_parser "encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"miniflux.app/v2/internal/http/request"
 	"miniflux.app/v2/internal/http/response/json"
@@ -77,9 +79,21 @@ func (h *handler) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if userModificationRequest.IsAdmin != nil && *userModificationRequest.IsAdmin {
-			json.BadRequest(w, r, errors.New("Only administrators can change permissions of standard users"))
+			json.BadRequest(w, r, errors.New("only administrators can change permissions of standard users"))
 			return
 		}
+	}
+
+	cleanEnd := regexp.MustCompile(`(?m)\r\n\s*$`)
+	if userModificationRequest.BlockFilterEntryRules != nil {
+		*userModificationRequest.BlockFilterEntryRules = cleanEnd.ReplaceAllLiteralString(*userModificationRequest.BlockFilterEntryRules, "")
+		// Clean carriage returns for Windows environments
+		*userModificationRequest.BlockFilterEntryRules = strings.ReplaceAll(*userModificationRequest.BlockFilterEntryRules, "\r\n", "\n")
+	}
+	if userModificationRequest.KeepFilterEntryRules != nil {
+		*userModificationRequest.KeepFilterEntryRules = cleanEnd.ReplaceAllLiteralString(*userModificationRequest.KeepFilterEntryRules, "")
+		// Clean carriage returns for Windows environments
+		*userModificationRequest.KeepFilterEntryRules = strings.ReplaceAll(*userModificationRequest.KeepFilterEntryRules, "\r\n", "\n")
 	}
 
 	if validationErr := validator.ValidateUserModification(h.store, originalUser.ID, &userModificationRequest); validationErr != nil {
@@ -116,6 +130,25 @@ func (h *handler) markUserAsRead(w http.ResponseWriter, r *http.Request) {
 	json.NoContent(w, r)
 }
 
+func (h *handler) getIntegrationsStatus(w http.ResponseWriter, r *http.Request) {
+	userID := request.UserID(r)
+
+	if _, err := h.store.UserByID(userID); err != nil {
+		json.NotFound(w, r)
+		return
+	}
+
+	hasIntegrations := h.store.HasSaveEntry(userID)
+
+	response := struct {
+		HasIntegrations bool `json:"has_integrations"`
+	}{
+		HasIntegrations: hasIntegrations,
+	}
+
+	json.OK(w, r, response)
+}
+
 func (h *handler) users(w http.ResponseWriter, r *http.Request) {
 	if !request.IsAdminUser(r) {
 		json.Forbidden(w, r)
@@ -141,7 +174,7 @@ func (h *handler) userByID(w http.ResponseWriter, r *http.Request) {
 	userID := request.RouteInt64Param(r, "userID")
 	user, err := h.store.UserByID(userID)
 	if err != nil {
-		json.BadRequest(w, r, errors.New("Unable to fetch this user from the database"))
+		json.BadRequest(w, r, errors.New("unable to fetch this user from the database"))
 		return
 	}
 
@@ -163,7 +196,7 @@ func (h *handler) userByUsername(w http.ResponseWriter, r *http.Request) {
 	username := request.RouteStringParam(r, "username")
 	user, err := h.store.UserByUsername(username)
 	if err != nil {
-		json.BadRequest(w, r, errors.New("Unable to fetch this user from the database"))
+		json.BadRequest(w, r, errors.New("unable to fetch this user from the database"))
 		return
 	}
 
@@ -194,7 +227,7 @@ func (h *handler) removeUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user.ID == request.UserID(r) {
-		json.BadRequest(w, r, errors.New("You cannot remove yourself"))
+		json.BadRequest(w, r, errors.New("you cannot remove yourself"))
 		return
 	}
 

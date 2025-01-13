@@ -6,6 +6,8 @@ package request // import "miniflux.app/v2/internal/http/request"
 import (
 	"net/http"
 	"strconv"
+
+	"miniflux.app/v2/internal/model"
 )
 
 // ContextKey represents a context key.
@@ -30,7 +32,17 @@ const (
 	LastForceRefreshContextKey
 	ClientIPContextKey
 	GoogleReaderToken
+	WebAuthnDataContextKey
 )
+
+func WebAuthnSessionData(r *http.Request) *model.WebAuthnSession {
+	if v := r.Context().Value(WebAuthnDataContextKey); v != nil {
+		if value, valid := v.(model.WebAuthnSession); valid {
+			return &value
+		}
+	}
+	return nil
+}
 
 // GoolgeReaderToken returns the google reader token if it exists.
 func GoolgeReaderToken(r *http.Request) string {
@@ -135,39 +147,27 @@ func ClientIP(r *http.Request) string {
 
 func getContextStringValue(r *http.Request, key ContextKey) string {
 	if v := r.Context().Value(key); v != nil {
-		value, valid := v.(string)
-		if !valid {
-			return ""
+		if value, valid := v.(string); valid {
+			return value
 		}
-
-		return value
 	}
-
 	return ""
 }
 
 func getContextBoolValue(r *http.Request, key ContextKey) bool {
 	if v := r.Context().Value(key); v != nil {
-		value, valid := v.(bool)
-		if !valid {
-			return false
+		if value, valid := v.(bool); valid {
+			return value
 		}
-
-		return value
 	}
-
 	return false
 }
 
 func getContextInt64Value(r *http.Request, key ContextKey) int64 {
 	if v := r.Context().Value(key); v != nil {
-		value, valid := v.(int64)
-		if !valid {
-			return 0
+		if value, valid := v.(int64); valid {
+			return value
 		}
-
-		return value
 	}
-
 	return 0
 }

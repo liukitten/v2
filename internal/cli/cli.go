@@ -4,6 +4,7 @@
 package cli // import "miniflux.app/v2/internal/cli"
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,7 +13,6 @@ import (
 
 	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/database"
-	"miniflux.app/v2/internal/locale"
 	"miniflux.app/v2/internal/storage"
 	"miniflux.app/v2/internal/ui/static"
 	"miniflux.app/v2/internal/version"
@@ -23,7 +23,7 @@ const (
 	flagVersionHelp         = "Show application version"
 	flagMigrateHelp         = "Run SQL migrations"
 	flagFlushSessionsHelp   = "Flush all sessions (disconnect users)"
-	flagCreateAdminHelp     = "Create admin user"
+	flagCreateAdminHelp     = "Create an admin user from an interactive terminal"
 	flagResetPasswordHelp   = "Reset user password"
 	flagResetFeedErrorsHelp = "Clear all feed errors for all users"
 	flagDebugModeHelp       = "Show debug logs"
@@ -88,6 +88,23 @@ func Parse() {
 		printErrorAndExit(err)
 	}
 
+	if oauth2Provider := config.Opts.OAuth2Provider(); oauth2Provider != "" {
+		if oauth2Provider != "oidc" && oauth2Provider != "google" {
+			printErrorAndExit(fmt.Errorf(`unsupported OAuth2 provider: %q (Possible values are "google" or "oidc")`, oauth2Provider))
+		}
+	}
+
+	if config.Opts.DisableLocalAuth() {
+		switch {
+		case config.Opts.OAuth2Provider() == "" && config.Opts.AuthProxyHeader() == "":
+			printErrorAndExit(errors.New("DISABLE_LOCAL_AUTH is enabled but neither OAUTH2_PROVIDER nor AUTH_PROXY_HEADER is not set. Please enable at least one authentication source"))
+		case config.Opts.OAuth2Provider() != "" && !config.Opts.IsOAuth2UserCreationAllowed():
+			printErrorAndExit(errors.New("DISABLE_LOCAL_AUTH is enabled and an OAUTH2_PROVIDER is configured, but OAUTH2_USER_CREATION is not enabled"))
+		case config.Opts.AuthProxyHeader() != "" && !config.Opts.IsAuthProxyUserCreationAllowed():
+			printErrorAndExit(errors.New("DISABLE_LOCAL_AUTH is enabled and an AUTH_PROXY_HEADER is configured, but AUTH_PROXY_USER_CREATION is not enabled"))
+		}
+	}
+
 	if flagConfigDump {
 		fmt.Print(config.Opts)
 		return
@@ -133,10 +150,6 @@ func Parse() {
 
 	if config.Opts.IsDefaultDatabaseURL() {
 		slog.Info("The default value for DATABASE_URL is used")
-	}
-
-	if err := locale.LoadCatalogMessages(); err != nil {
-		printErrorAndExit(fmt.Errorf("unable to load translations: %v", err))
 	}
 
 	if err := static.CalculateBinaryFileChecksums(); err != nil {
@@ -191,7 +204,7 @@ func Parse() {
 	}
 
 	if flagCreateAdmin {
-		createAdmin(store)
+		createAdminUserFromInteractiveTerminal(store)
 		return
 	}
 
@@ -211,9 +224,8 @@ func Parse() {
 		printErrorAndExit(err)
 	}
 
-	// Create admin user and start the daemon.
 	if config.Opts.CreateAdmin() {
-		createAdmin(store)
+		createAdminUserFromEnvironmentVariables(store)
 	}
 
 	if flagRefreshFeeds {

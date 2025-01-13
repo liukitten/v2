@@ -4,16 +4,17 @@
 package sanitizer // import "miniflux.app/v2/internal/reader/sanitizer"
 
 import (
-	"bytes"
 	"io"
+	"strings"
 
 	"golang.org/x/net/html"
 )
 
 // StripTags removes all HTML/XML tags from the input string.
+// This function must *only* be used for cosmetic purposes, not to prevent code injections like XSS.
 func StripTags(input string) string {
-	tokenizer := html.NewTokenizer(bytes.NewBufferString(input))
-	var buffer bytes.Buffer
+	tokenizer := html.NewTokenizer(strings.NewReader(input))
+	var buffer strings.Builder
 
 	for {
 		if tokenizer.Next() == html.ErrorToken {
@@ -26,8 +27,7 @@ func StripTags(input string) string {
 		}
 
 		token := tokenizer.Token()
-		switch token.Type {
-		case html.TextToken:
+		if token.Type == html.TextToken {
 			buffer.WriteString(token.Data)
 		}
 	}

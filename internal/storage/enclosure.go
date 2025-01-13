@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"miniflux.app/v2/internal/model"
+
+	"github.com/lib/pq"
 )
 
 // GetEnclosures returns all attachments for the given entry.
@@ -88,7 +90,9 @@ func (s *Storage) GetEnclosure(enclosureID int64) (*model.Enclosure, error) {
 		&enclosure.MediaProgression,
 	)
 
-	if err != nil {
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch enclosure row: %v`, err)
 	}
 
@@ -130,11 +134,8 @@ func (s *Storage) updateEnclosures(tx *sql.Tx, entry *model.Entry) error {
 		return nil
 	}
 
-	sqlValues := []any{entry.UserID, entry.ID}
-	sqlPlaceholders := []string{}
-
+	sqlValues := make([]string, 0, len(entry.Enclosures))
 	for _, enclosure := range entry.Enclosures {
-		sqlPlaceholders = append(sqlPlaceholders, fmt.Sprintf(`$%d`, len(sqlValues)+1))
 		sqlValues = append(sqlValues, strings.TrimSpace(enclosure.URL))
 
 		if err := s.createEnclosure(tx, enclosure); err != nil {
@@ -146,12 +147,10 @@ func (s *Storage) updateEnclosures(tx *sql.Tx, entry *model.Entry) error {
 		DELETE FROM
 			enclosures
 		WHERE
-			user_id=$1 AND entry_id=$2 AND url NOT IN (%s)
+			user_id=$1 AND entry_id=$2 AND url <> ALL($3)
 	`
 
-	query = fmt.Sprintf(query, strings.Join(sqlPlaceholders, `,`))
-
-	_, err := tx.Exec(query, sqlValues...)
+	_, err := tx.Exec(query, entry.UserID, entry.ID, pq.Array(sqlValues))
 	if err != nil {
 		return fmt.Errorf(`store: unable to delete old enclosures: %v`, err)
 	}
@@ -167,8 +166,8 @@ func (s *Storage) UpdateEnclosure(enclosure *model.Enclosure) error {
 			url=$1,
 			size=$2,
 			mime_type=$3,
-			entry_id=$4, 
-			user_id=$5, 
+			entry_id=$4,
+			user_id=$5,
 			media_progression=$6
 		WHERE
 			id=$7

@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"miniflux.app/v2/internal/config"
+	"miniflux.app/v2/internal/crypto"
 	"miniflux.app/v2/internal/http/cookie"
 	"miniflux.app/v2/internal/http/request"
 	"miniflux.app/v2/internal/http/response/html"
@@ -92,7 +93,7 @@ func (m *middleware) handleAppSession(next http.Handler) http.Handler {
 			formValue := r.FormValue("csrf")
 			headerValue := r.Header.Get("X-Csrf-Token")
 
-			if session.Data.CSRF != formValue && session.Data.CSRF != headerValue {
+			if !crypto.ConstantTimeCmp(session.Data.CSRF, formValue) && !crypto.ConstantTimeCmp(session.Data.CSRF, headerValue) {
 				slog.Warn("Invalid or missing CSRF token",
 					slog.Any("url", r.RequestURI),
 					slog.String("form_csrf", formValue),
@@ -120,7 +121,7 @@ func (m *middleware) handleAppSession(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, request.UserThemeContextKey, session.Data.Theme)
 		ctx = context.WithValue(ctx, request.PocketRequestTokenContextKey, session.Data.PocketRequestToken)
 		ctx = context.WithValue(ctx, request.LastForceRefreshContextKey, session.Data.LastForceRefresh)
-
+		ctx = context.WithValue(ctx, request.WebAuthnDataContextKey, session.Data.WebAuthnSessionData)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -159,7 +160,9 @@ func (m *middleware) isPublicRoute(r *http.Request) bool {
 		"sharedEntry",
 		"healthcheck",
 		"offline",
-		"proxy":
+		"proxy",
+		"webauthnLoginBegin",
+		"webauthnLoginFinish":
 		return true
 	default:
 		return false
@@ -255,6 +258,6 @@ func (m *middleware) handleAuthProxy(next http.Handler) http.Handler {
 			config.Opts.BasePath(),
 		))
 
-		html.Redirect(w, r, route.Path(m.router, "unread"))
+		html.Redirect(w, r, route.Path(m.router, user.DefaultHomePage))
 	})
 }

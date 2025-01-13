@@ -7,8 +7,20 @@ import (
 	"net/http"
 	"strconv"
 
+	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/locale"
 	"miniflux.app/v2/internal/model"
+	"miniflux.app/v2/internal/validator"
+)
+
+// MarkReadBehavior list all possible behaviors for automatically marking an entry as read
+type MarkReadBehavior string
+
+const (
+	NoAutoMarkAsRead                           MarkReadBehavior = "no-auto"
+	MarkAsReadOnView                           MarkReadBehavior = "on-view"
+	MarkAsReadOnViewButWaitForPlayerCompletion MarkReadBehavior = "on-view-but-wait-for-player-completion"
+	MarkAsReadOnlyOnPlayerCompletion           MarkReadBehavior = "on-player-completion"
 )
 
 // SettingsForm represents the settings form.
@@ -25,6 +37,8 @@ type SettingsForm struct {
 	KeyboardShortcuts      bool
 	ShowReadingTime        bool
 	CustomCSS              string
+	CustomJS               string
+	ExternalFontHosts      string
 	EntrySwipe             bool
 	GestureNav             string
 	DisplayMode            string
@@ -33,11 +47,52 @@ type SettingsForm struct {
 	DefaultHomePage        string
 	CategoriesSortingOrder string
 	MarkReadOnView         bool
+	// MarkReadBehavior is a string representation of the MarkReadOnView and MarkReadOnMediaPlayerCompletion fields together
+	MarkReadBehavior      MarkReadBehavior
+	MediaPlaybackRate     float64
+	BlockFilterEntryRules string
+	KeepFilterEntryRules  string
+}
+
+// MarkAsReadBehavior returns the MarkReadBehavior from the given MarkReadOnView and MarkReadOnMediaPlayerCompletion values.
+// Useful to convert the values from the User model to the form
+func MarkAsReadBehavior(markReadOnView, markReadOnMediaPlayerCompletion bool) MarkReadBehavior {
+	switch {
+	case markReadOnView && !markReadOnMediaPlayerCompletion:
+		return MarkAsReadOnView
+	case markReadOnView && markReadOnMediaPlayerCompletion:
+		return MarkAsReadOnViewButWaitForPlayerCompletion
+	case !markReadOnView && markReadOnMediaPlayerCompletion:
+		return MarkAsReadOnlyOnPlayerCompletion
+	case !markReadOnView && !markReadOnMediaPlayerCompletion:
+		fallthrough // Explicit defaulting
+	default:
+		return NoAutoMarkAsRead
+	}
+}
+
+// ExtractMarkAsReadBehavior returns the MarkReadOnView and MarkReadOnMediaPlayerCompletion values from the given MarkReadBehavior.
+// Useful to extract the values from the form to the User model
+func ExtractMarkAsReadBehavior(behavior MarkReadBehavior) (markReadOnView, markReadOnMediaPlayerCompletion bool) {
+	switch behavior {
+	case MarkAsReadOnView:
+		return true, false
+	case MarkAsReadOnViewButWaitForPlayerCompletion:
+		return true, true
+	case MarkAsReadOnlyOnPlayerCompletion:
+		return false, true
+	case NoAutoMarkAsRead:
+		fallthrough // Explicit defaulting
+	default:
+		return false, false
+	}
 }
 
 // Merge updates the fields of the given user.
 func (s *SettingsForm) Merge(user *model.User) *model.User {
-	user.Username = s.Username
+	if !config.Opts.DisableLocalAuth() {
+		user.Username = s.Username
+	}
 	user.Theme = s.Theme
 	user.Language = s.Language
 	user.Timezone = s.Timezone
@@ -47,6 +102,8 @@ func (s *SettingsForm) Merge(user *model.User) *model.User {
 	user.KeyboardShortcuts = s.KeyboardShortcuts
 	user.ShowReadingTime = s.ShowReadingTime
 	user.Stylesheet = s.CustomCSS
+	user.CustomJS = s.CustomJS
+	user.ExternalFontHosts = s.ExternalFontHosts
 	user.EntrySwipe = s.EntrySwipe
 	user.GestureNav = s.GestureNav
 	user.DisplayMode = s.DisplayMode
@@ -54,7 +111,13 @@ func (s *SettingsForm) Merge(user *model.User) *model.User {
 	user.DefaultReadingSpeed = s.DefaultReadingSpeed
 	user.DefaultHomePage = s.DefaultHomePage
 	user.CategoriesSortingOrder = s.CategoriesSortingOrder
-	user.MarkReadOnView = s.MarkReadOnView
+	user.MediaPlaybackRate = s.MediaPlaybackRate
+	user.BlockFilterEntryRules = s.BlockFilterEntryRules
+	user.KeepFilterEntryRules = s.KeepFilterEntryRules
+
+	MarkReadOnView, MarkReadOnMediaPlayerCompletion := ExtractMarkAsReadBehavior(s.MarkReadBehavior)
+	user.MarkReadOnView = MarkReadOnView
+	user.MarkReadOnMediaPlayerCompletion = MarkReadOnMediaPlayerCompletion
 
 	if s.Password != "" {
 		user.Password = s.Password
@@ -65,7 +128,7 @@ func (s *SettingsForm) Merge(user *model.User) *model.User {
 
 // Validate makes sure the form values are valid.
 func (s *SettingsForm) Validate() *locale.LocalizedError {
-	if s.Username == "" || s.Theme == "" || s.Language == "" || s.Timezone == "" || s.EntryDirection == "" || s.DisplayMode == "" || s.DefaultHomePage == "" {
+	if (s.Username == "" && !config.Opts.DisableLocalAuth()) || s.Theme == "" || s.Language == "" || s.Timezone == "" || s.EntryDirection == "" || s.DisplayMode == "" || s.DefaultHomePage == "" {
 		return locale.NewLocalizedError("error.settings_mandatory_fields")
 	}
 
@@ -81,6 +144,16 @@ func (s *SettingsForm) Validate() *locale.LocalizedError {
 	} else if s.Password != "" {
 		if s.Password != s.Confirmation {
 			return locale.NewLocalizedError("error.different_passwords")
+		}
+	}
+
+	if s.MediaPlaybackRate < 0.25 || s.MediaPlaybackRate > 4 {
+		return locale.NewLocalizedError("error.settings_media_playback_rate_range")
+	}
+
+	if s.ExternalFontHosts != "" {
+		if !validator.IsValidDomainList(s.ExternalFontHosts) {
+			return locale.NewLocalizedError("error.settings_invalid_domain_list")
 		}
 	}
 
@@ -101,6 +174,10 @@ func NewSettingsForm(r *http.Request) *SettingsForm {
 	if err != nil {
 		cjkReadingSpeed = 0
 	}
+	mediaPlaybackRate, err := strconv.ParseFloat(r.FormValue("media_playback_rate"), 64)
+	if err != nil {
+		mediaPlaybackRate = 1
+	}
 	return &SettingsForm{
 		Username:               r.FormValue("username"),
 		Password:               r.FormValue("password"),
@@ -114,6 +191,8 @@ func NewSettingsForm(r *http.Request) *SettingsForm {
 		KeyboardShortcuts:      r.FormValue("keyboard_shortcuts") == "1",
 		ShowReadingTime:        r.FormValue("show_reading_time") == "1",
 		CustomCSS:              r.FormValue("custom_css"),
+		CustomJS:               r.FormValue("custom_js"),
+		ExternalFontHosts:      r.FormValue("external_font_hosts"),
 		EntrySwipe:             r.FormValue("entry_swipe") == "1",
 		GestureNav:             r.FormValue("gesture_nav"),
 		DisplayMode:            r.FormValue("display_mode"),
@@ -122,5 +201,9 @@ func NewSettingsForm(r *http.Request) *SettingsForm {
 		DefaultHomePage:        r.FormValue("default_home_page"),
 		CategoriesSortingOrder: r.FormValue("categories_sorting_order"),
 		MarkReadOnView:         r.FormValue("mark_read_on_view") == "1",
+		MarkReadBehavior:       MarkReadBehavior(r.FormValue("mark_read_behavior")),
+		MediaPlaybackRate:      mediaPlaybackRate,
+		BlockFilterEntryRules:  r.FormValue("block_filter_entry_rules"),
+		KeepFilterEntryRules:   r.FormValue("keep_filter_entry_rules"),
 	}
 }

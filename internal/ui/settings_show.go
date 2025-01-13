@@ -16,9 +16,6 @@ import (
 )
 
 func (h *handler) showSettingsPage(w http.ResponseWriter, r *http.Request) {
-	sess := session.New(h.store, request.SessionID(r))
-	view := view.New(h.tpl, r, sess)
-
 	user, err := h.store.UserByID(request.UserID(r))
 	if err != nil {
 		html.ServerError(w, r, err)
@@ -36,6 +33,8 @@ func (h *handler) showSettingsPage(w http.ResponseWriter, r *http.Request) {
 		KeyboardShortcuts:      user.KeyboardShortcuts,
 		ShowReadingTime:        user.ShowReadingTime,
 		CustomCSS:              user.Stylesheet,
+		CustomJS:               user.CustomJS,
+		ExternalFontHosts:      user.ExternalFontHosts,
 		EntrySwipe:             user.EntrySwipe,
 		GestureNav:             user.GestureNav,
 		DisplayMode:            user.DisplayMode,
@@ -43,7 +42,10 @@ func (h *handler) showSettingsPage(w http.ResponseWriter, r *http.Request) {
 		CJKReadingSpeed:        user.CJKReadingSpeed,
 		DefaultHomePage:        user.DefaultHomePage,
 		CategoriesSortingOrder: user.CategoriesSortingOrder,
-		MarkReadOnView:         user.MarkReadOnView,
+		MarkReadBehavior:       form.MarkAsReadBehavior(user.MarkReadOnView, user.MarkReadOnMediaPlayerCompletion),
+		MediaPlaybackRate:      user.MediaPlaybackRate,
+		BlockFilterEntryRules:  user.BlockFilterEntryRules,
+		KeepFilterEntryRules:   user.KeepFilterEntryRules,
 	}
 
 	timezones, err := h.store.Timezones()
@@ -52,9 +54,23 @@ func (h *handler) showSettingsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	creds, err := h.store.WebAuthnCredentialsByUserID(user.ID)
+	if err != nil {
+		html.ServerError(w, r, err)
+		return
+	}
+
+	sess := session.New(h.store, request.SessionID(r))
+	view := view.New(h.tpl, r, sess)
 	view.Set("form", settingsForm)
+	view.Set("readBehaviors", map[string]any{
+		"NoAutoMarkAsRead":                           form.NoAutoMarkAsRead,
+		"MarkAsReadOnView":                           form.MarkAsReadOnView,
+		"MarkAsReadOnViewButWaitForPlayerCompletion": form.MarkAsReadOnViewButWaitForPlayerCompletion,
+		"MarkAsReadOnlyOnPlayerCompletion":           form.MarkAsReadOnlyOnPlayerCompletion,
+	})
 	view.Set("themes", model.Themes())
-	view.Set("languages", locale.AvailableLanguages())
+	view.Set("languages", locale.AvailableLanguages)
 	view.Set("timezones", timezones)
 	view.Set("menu", "settings")
 	view.Set("user", user)
@@ -62,6 +78,8 @@ func (h *handler) showSettingsPage(w http.ResponseWriter, r *http.Request) {
 	view.Set("countErrorFeeds", h.store.CountUserFeedsWithErrors(user.ID))
 	view.Set("default_home_pages", model.HomePages())
 	view.Set("categories_sorting_options", model.CategoriesSortingOptions())
+	view.Set("countWebAuthnCerts", h.store.CountWebAuthnCredentialsByUserID(user.ID))
+	view.Set("webAuthnCerts", creds)
 
 	html.OK(w, r, view.Render("settings"))
 }

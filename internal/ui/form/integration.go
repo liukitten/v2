@@ -54,11 +54,20 @@ type IntegrationForm struct {
 	TelegramBotDisableWebPagePreview bool
 	TelegramBotDisableNotification   bool
 	TelegramBotDisableButtons        bool
+	LinkAceEnabled                   bool
+	LinkAceURL                       string
+	LinkAceAPIKey                    string
+	LinkAceTags                      string
+	LinkAcePrivate                   bool
+	LinkAceCheckDisabled             bool
 	LinkdingEnabled                  bool
 	LinkdingURL                      string
 	LinkdingAPIKey                   string
 	LinkdingTags                     string
 	LinkdingMarkAsUnread             bool
+	LinkwardenEnabled                bool
+	LinkwardenURL                    string
+	LinkwardenAPIKey                 string
 	MatrixBotEnabled                 bool
 	MatrixBotUser                    string
 	MatrixBotPassword                string
@@ -67,6 +76,11 @@ type IntegrationForm struct {
 	AppriseEnabled                   bool
 	AppriseURL                       string
 	AppriseServicesURL               string
+	ReadeckEnabled                   bool
+	ReadeckURL                       string
+	ReadeckAPIKey                    string
+	ReadeckLabels                    string
+	ReadeckOnlyURL                   bool
 	ShioriEnabled                    bool
 	ShioriURL                        string
 	ShioriUsername                   string
@@ -79,6 +93,28 @@ type IntegrationForm struct {
 	WebhookSecret                    string
 	RSSBridgeEnabled                 bool
 	RSSBridgeURL                     string
+	OmnivoreEnabled                  bool
+	OmnivoreAPIKey                   string
+	OmnivoreURL                      string
+	RaindropEnabled                  bool
+	RaindropToken                    string
+	RaindropCollectionID             string
+	RaindropTags                     string
+	BetulaEnabled                    bool
+	BetulaURL                        string
+	BetulaToken                      string
+	NtfyEnabled                      bool
+	NtfyTopic                        string
+	NtfyURL                          string
+	NtfyAPIToken                     string
+	NtfyUsername                     string
+	NtfyPassword                     string
+	NtfyIconURL                      string
+	NtfyInternalLinks                bool
+	CuboxEnabled                     bool
+	CuboxAPILink                     string
+	DiscordEnabled                   bool
+	DiscordWebhookLink               string
 }
 
 // Merge copy form values to the model.
@@ -123,11 +159,20 @@ func (i IntegrationForm) Merge(integration *model.Integration) {
 	integration.TelegramBotDisableWebPagePreview = i.TelegramBotDisableWebPagePreview
 	integration.TelegramBotDisableNotification = i.TelegramBotDisableNotification
 	integration.TelegramBotDisableButtons = i.TelegramBotDisableButtons
+	integration.LinkAceEnabled = i.LinkAceEnabled
+	integration.LinkAceURL = i.LinkAceURL
+	integration.LinkAceAPIKey = i.LinkAceAPIKey
+	integration.LinkAceTags = i.LinkAceTags
+	integration.LinkAcePrivate = i.LinkAcePrivate
+	integration.LinkAceCheckDisabled = i.LinkAceCheckDisabled
 	integration.LinkdingEnabled = i.LinkdingEnabled
 	integration.LinkdingURL = i.LinkdingURL
 	integration.LinkdingAPIKey = i.LinkdingAPIKey
 	integration.LinkdingTags = i.LinkdingTags
 	integration.LinkdingMarkAsUnread = i.LinkdingMarkAsUnread
+	integration.LinkwardenEnabled = i.LinkwardenEnabled
+	integration.LinkwardenURL = i.LinkwardenURL
+	integration.LinkwardenAPIKey = i.LinkwardenAPIKey
 	integration.MatrixBotEnabled = i.MatrixBotEnabled
 	integration.MatrixBotUser = i.MatrixBotUser
 	integration.MatrixBotPassword = i.MatrixBotPassword
@@ -136,6 +181,11 @@ func (i IntegrationForm) Merge(integration *model.Integration) {
 	integration.AppriseEnabled = i.AppriseEnabled
 	integration.AppriseServicesURL = i.AppriseServicesURL
 	integration.AppriseURL = i.AppriseURL
+	integration.ReadeckEnabled = i.ReadeckEnabled
+	integration.ReadeckURL = i.ReadeckURL
+	integration.ReadeckAPIKey = i.ReadeckAPIKey
+	integration.ReadeckLabels = i.ReadeckLabels
+	integration.ReadeckOnlyURL = i.ReadeckOnlyURL
 	integration.ShioriEnabled = i.ShioriEnabled
 	integration.ShioriURL = i.ShioriURL
 	integration.ShioriUsername = i.ShioriUsername
@@ -147,6 +197,28 @@ func (i IntegrationForm) Merge(integration *model.Integration) {
 	integration.WebhookURL = i.WebhookURL
 	integration.RSSBridgeEnabled = i.RSSBridgeEnabled
 	integration.RSSBridgeURL = i.RSSBridgeURL
+	integration.OmnivoreEnabled = i.OmnivoreEnabled
+	integration.OmnivoreAPIKey = i.OmnivoreAPIKey
+	integration.OmnivoreURL = i.OmnivoreURL
+	integration.RaindropEnabled = i.RaindropEnabled
+	integration.RaindropToken = i.RaindropToken
+	integration.RaindropCollectionID = i.RaindropCollectionID
+	integration.RaindropTags = i.RaindropTags
+	integration.BetulaEnabled = i.BetulaEnabled
+	integration.BetulaURL = i.BetulaURL
+	integration.BetulaToken = i.BetulaToken
+	integration.NtfyEnabled = i.NtfyEnabled
+	integration.NtfyTopic = i.NtfyTopic
+	integration.NtfyURL = i.NtfyURL
+	integration.NtfyAPIToken = i.NtfyAPIToken
+	integration.NtfyUsername = i.NtfyUsername
+	integration.NtfyPassword = i.NtfyPassword
+	integration.NtfyIconURL = i.NtfyIconURL
+	integration.NtfyInternalLinks = i.NtfyInternalLinks
+	integration.CuboxEnabled = i.CuboxEnabled
+	integration.CuboxAPILink = i.CuboxAPILink
+	integration.DiscordEnabled = i.DiscordEnabled
+	integration.DiscordWebhookLink = i.DiscordWebhookLink
 }
 
 // NewIntegrationForm returns a new IntegrationForm.
@@ -194,11 +266,20 @@ func NewIntegrationForm(r *http.Request) *IntegrationForm {
 		TelegramBotDisableWebPagePreview: r.FormValue("telegram_bot_disable_web_page_preview") == "1",
 		TelegramBotDisableNotification:   r.FormValue("telegram_bot_disable_notification") == "1",
 		TelegramBotDisableButtons:        r.FormValue("telegram_bot_disable_buttons") == "1",
+		LinkAceEnabled:                   r.FormValue("linkace_enabled") == "1",
+		LinkAceURL:                       r.FormValue("linkace_url"),
+		LinkAceAPIKey:                    r.FormValue("linkace_api_key"),
+		LinkAceTags:                      r.FormValue("linkace_tags"),
+		LinkAcePrivate:                   r.FormValue("linkace_is_private") == "1",
+		LinkAceCheckDisabled:             r.FormValue("linkace_check_disabled") == "1",
 		LinkdingEnabled:                  r.FormValue("linkding_enabled") == "1",
 		LinkdingURL:                      r.FormValue("linkding_url"),
 		LinkdingAPIKey:                   r.FormValue("linkding_api_key"),
 		LinkdingTags:                     r.FormValue("linkding_tags"),
 		LinkdingMarkAsUnread:             r.FormValue("linkding_mark_as_unread") == "1",
+		LinkwardenEnabled:                r.FormValue("linkwarden_enabled") == "1",
+		LinkwardenURL:                    r.FormValue("linkwarden_url"),
+		LinkwardenAPIKey:                 r.FormValue("linkwarden_api_key"),
 		MatrixBotEnabled:                 r.FormValue("matrix_bot_enabled") == "1",
 		MatrixBotUser:                    r.FormValue("matrix_bot_user"),
 		MatrixBotPassword:                r.FormValue("matrix_bot_password"),
@@ -207,6 +288,11 @@ func NewIntegrationForm(r *http.Request) *IntegrationForm {
 		AppriseEnabled:                   r.FormValue("apprise_enabled") == "1",
 		AppriseURL:                       r.FormValue("apprise_url"),
 		AppriseServicesURL:               r.FormValue("apprise_services_url"),
+		ReadeckEnabled:                   r.FormValue("readeck_enabled") == "1",
+		ReadeckURL:                       r.FormValue("readeck_url"),
+		ReadeckAPIKey:                    r.FormValue("readeck_api_key"),
+		ReadeckLabels:                    r.FormValue("readeck_labels"),
+		ReadeckOnlyURL:                   r.FormValue("readeck_only_url") == "1",
 		ShioriEnabled:                    r.FormValue("shiori_enabled") == "1",
 		ShioriURL:                        r.FormValue("shiori_url"),
 		ShioriUsername:                   r.FormValue("shiori_username"),
@@ -218,6 +304,28 @@ func NewIntegrationForm(r *http.Request) *IntegrationForm {
 		WebhookURL:                       r.FormValue("webhook_url"),
 		RSSBridgeEnabled:                 r.FormValue("rssbridge_enabled") == "1",
 		RSSBridgeURL:                     r.FormValue("rssbridge_url"),
+		OmnivoreEnabled:                  r.FormValue("omnivore_enabled") == "1",
+		OmnivoreAPIKey:                   r.FormValue("omnivore_api_key"),
+		OmnivoreURL:                      r.FormValue("omnivore_url"),
+		RaindropEnabled:                  r.FormValue("raindrop_enabled") == "1",
+		RaindropToken:                    r.FormValue("raindrop_token"),
+		RaindropCollectionID:             r.FormValue("raindrop_collection_id"),
+		RaindropTags:                     r.FormValue("raindrop_tags"),
+		BetulaEnabled:                    r.FormValue("betula_enabled") == "1",
+		BetulaURL:                        r.FormValue("betula_url"),
+		BetulaToken:                      r.FormValue("betula_token"),
+		NtfyEnabled:                      r.FormValue("ntfy_enabled") == "1",
+		NtfyTopic:                        r.FormValue("ntfy_topic"),
+		NtfyURL:                          r.FormValue("ntfy_url"),
+		NtfyAPIToken:                     r.FormValue("ntfy_api_token"),
+		NtfyUsername:                     r.FormValue("ntfy_username"),
+		NtfyPassword:                     r.FormValue("ntfy_password"),
+		NtfyIconURL:                      r.FormValue("ntfy_icon_url"),
+		NtfyInternalLinks:                r.FormValue("ntfy_internal_links") == "1",
+		CuboxEnabled:                     r.FormValue("cubox_enabled") == "1",
+		CuboxAPILink:                     r.FormValue("cubox_api_link"),
+		DiscordEnabled:                   r.FormValue("discord_enabled") == "1",
+		DiscordWebhookLink:               r.FormValue("discord_webhook_link"),
 	}
 }
 

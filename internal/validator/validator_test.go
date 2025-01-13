@@ -3,7 +3,11 @@
 
 package validator // import "miniflux.app/v2/internal/validator"
 
-import "testing"
+import (
+	"testing"
+
+	"miniflux.app/v2/internal/locale"
+)
 
 func TestIsValidURL(t *testing.T) {
 	scenarios := map[string]bool{
@@ -56,6 +60,46 @@ func TestIsValidRegex(t *testing.T) {
 		result := IsValidRegex(expr)
 		if result != expected {
 			t.Errorf(`Unexpected result, got %v instead of %v`, result, expected)
+		}
+	}
+}
+
+func TestIsValidDomain(t *testing.T) {
+	scenarios := map[string]bool{
+		"example.org":          true,
+		"example":              false,
+		"example.":             false,
+		"example..":            false,
+		"mail.example.com:443": false,
+		"*.example.com":        false,
+	}
+
+	for domain, expected := range scenarios {
+		result := IsValidDomain(domain)
+		if result != expected {
+			t.Errorf(`Unexpected result, got %v instead of %v`, result, expected)
+		}
+	}
+}
+
+func TestValidateUsername(t *testing.T) {
+	scenarios := map[string]*locale.LocalizedError{
+		"jvoisin":          nil,
+		"j.voisin":         nil,
+		"j@vois.in":        nil,
+		"invalid username": locale.NewLocalizedError("error.invalid_username"),
+	}
+
+	for username, expected := range scenarios {
+		result := validateUsername(username)
+		if expected == nil {
+			if result != nil {
+				t.Errorf(`got an unexpected error for %q instead of nil: %v`, username, result)
+			}
+		} else {
+			if result == nil {
+				t.Errorf(`expected an error, got nil.`)
+			}
 		}
 	}
 }

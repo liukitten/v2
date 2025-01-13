@@ -39,7 +39,7 @@ func TestLoadCatalog(t *testing.T) {
 }
 
 func TestAllKeysHaveValue(t *testing.T) {
-	for language := range AvailableLanguages() {
+	for language := range AvailableLanguages {
 		messages, err := loadTranslationFile(language)
 		if err != nil {
 			t.Fatalf(`Unable to load translation messages for language %q`, language)
@@ -53,11 +53,11 @@ func TestAllKeysHaveValue(t *testing.T) {
 			switch value := v.(type) {
 			case string:
 				if value == "" {
-					t.Errorf(`The key %q for the language %q have an empty string as value`, k, language)
+					t.Errorf(`The key %q for the language %q has an empty string as value`, k, language)
 				}
-			case []string:
+			case []any:
 				if len(value) == 0 {
-					t.Errorf(`The key %q for the language %q have an empty list as value`, k, language)
+					t.Errorf(`The key %q for the language %q has an empty list as value`, k, language)
 				}
 			}
 		}
@@ -71,7 +71,7 @@ func TestMissingTranslations(t *testing.T) {
 		t.Fatal(`Unable to parse reference language`)
 	}
 
-	for language := range AvailableLanguages() {
+	for language := range AvailableLanguages {
 		if language == refLang {
 			continue
 		}
@@ -84,6 +84,43 @@ func TestMissingTranslations(t *testing.T) {
 		for key := range references {
 			if _, found := messages[key]; !found {
 				t.Fatalf(`Translation key %q not found in language %q`, key, language)
+			}
+		}
+	}
+}
+
+func TestTranslationFilePluralForms(t *testing.T) {
+	var numberOfPluralFormsPerLanguage = map[string]int{
+		"en_US": 2,
+		"es_ES": 2,
+		"fr_FR": 2,
+		"de_DE": 2,
+		"pl_PL": 3,
+		"pt_BR": 2,
+		"zh_CN": 1,
+		"zh_TW": 1,
+		"nl_NL": 2,
+		"ru_RU": 3,
+		"it_IT": 2,
+		"ja_JP": 1,
+		"tr_TR": 2,
+		"el_EL": 2,
+		"fi_FI": 2,
+		"hi_IN": 2,
+		"uk_UA": 3,
+		"id_ID": 1,
+	}
+	for language := range AvailableLanguages {
+		messages, err := loadTranslationFile(language)
+		if err != nil {
+			t.Fatalf(`Unable to load translation messages for language %q`, language)
+		}
+
+		for k, v := range messages {
+			if value, ok := v.([]any); ok {
+				if len(value) != numberOfPluralFormsPerLanguage[language] {
+					t.Errorf(`The key %q for the language %q does not have the expected number of plurals, got %d instead of %d`, k, language, len(value), numberOfPluralFormsPerLanguage[language])
+				}
 			}
 		}
 	}
